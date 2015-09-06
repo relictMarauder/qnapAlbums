@@ -3,7 +3,7 @@ qnapAlbums is the tool for save photo/video albums(from Photo and Video Stations
 
 Backup/Restore functionality ist unstable
 
-Tested on QNAP-470 firmware v4.1.x
+Tested on QNAP TS-470 firmware v4.1.x
 
 # Quick start
  The tool must be installed on QNAP directly

@@ -327,6 +327,7 @@ function AlbumNotFoundError(message, extra) {
     this.message = message;
     this.extra = extra;
 }
+
 function uppendArgument(fn, additionalsArguments, override) {
     return function () {
         var args = override ? [] : Array.prototype.slice.call(arguments);
