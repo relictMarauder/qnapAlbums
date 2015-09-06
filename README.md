@@ -39,4 +39,4 @@ Tested on QNAP-470 firmware v4.1.x
 * Example:
   -  `node ./qnapAlbums.js -p -v -s ./albums` save photo and video albums to folder ./albums
   -  `node ./qnapAlbums.js -v -s ./videoAlbums` save only video albums to folder ./videoAlbums
-  -  `node ./qnapAlbums.js -p -s ./videoAlbums` save only photo albums to folder ./photoAlbums
+  -  `node ./qnapAlbums.js -p -s ./photoAlbums` save only photo albums to folder ./photoAlbums
