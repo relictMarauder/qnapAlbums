@@ -11,7 +11,7 @@ Tested on QNAP-470 firmware v4.1.x
    * Install NodeJs (https://github.com/jupe/QPKG-NodeJS)
    *  Clone repository
 
-        git clone
+        git clone https://github.com/relictMarauder/qnapAlbums.git
 
 ## Node.js
  * Install dependencies
