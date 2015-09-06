@@ -7,14 +7,23 @@ var path = require('path');
 var moment = require('moment');
 
 var mountPoint = "/share/CACHEDEV1_DATA/";
-qnapAlbumsMgmr.version('0.0.1')
+
+
+qnapAlbumsMgmr
+    .version('0.0.2')
     .usage('<option> [parameter]')
     .option("-v, --video", "process video albums")
     .option("-p, --photo", "process photo albums")
     .option("-e, --export [albumName]", "export  albums to file")
     .option("-i, --import [fileName]", "import  albums from file")
     .option("-l, --list [albumName]", "list of albums/content of album if album name is defined")
-    .option("-s, --save <path>", "export  albums as Folders with softlinks on elements")
+    .option("-s, --save <path>", "export  albums as Folders with softlinks to elements")
+    .on("--help", function () {
+        console.log('  Examples:');
+        console.log('');
+        console.log('    qnapAlbums -v -p -s   save videos and photo albums as folders with softlinks to elements');
+        console.log('');
+    })
     .parse(process.argv);
 
 
@@ -27,33 +36,87 @@ var connection = mysql.createConnection({
 });
 
 var conn = Promise.promisifyAll(connection);
+
+
 conn
     .connectAsync()
-    .then(function () {
-        if (qnapAlbumsMgmr.list && (qnapAlbumsMgmr.video || qnapAlbumsMgmr.photo) ) {
-            return getListOfAlbum(qnapAlbumsMgmr.list);
+    .then(function (param1) {
+        if (qnapAlbumsMgmr.save == true) {
+            console.log("please define path for saving ");
+            return;
         }
-        if (qnapAlbumsMgmr.export && (qnapAlbumsMgmr.video || qnapAlbumsMgmr.photo)) {
-            return exportToFile(qnapAlbumsMgmr.export);
-        }
-        if (qnapAlbumsMgmr.import && (qnapAlbumsMgmr.video || qnapAlbumsMgmr.photo)) {
-            return importAlbums(qnapAlbumsMgmr.import);
-        }
-        if (qnapAlbumsMgmr.save && (qnapAlbumsMgmr.video || qnapAlbumsMgmr.photo)) {
-            if (qnapAlbumsMgmr.save == true) {
-                console.log("please define path for saving ")
+
+        var videoScope =
+        {
+            processVideos: true,
+            processPhotos: false,
+            logPrefix: "Video"
+        };
+        var photoScope =
+        {
+            processVideos: true,
+            processPhotos: false,
+            logPrefix: "Photo"
+        };
+        var mainPromise = Promise.resolve();
+        if (qnapAlbumsMgmr.save) {
+            videoScope.savePath = qnapAlbumsMgmr.save;
+            if (qnapAlbumsMgmr.video) {
+                mainPromise = mainPromise.then(uppendArgument(synchronizeWithFolder, [qnapAlbumsMgmr.save, videoScope], true));
             }
-            else {
-                return synchronizeWithFolder(qnapAlbumsMgmr.save)
+            if (qnapAlbumsMgmr.photo) {
+                mainPromise = mainPromise.then(uppendArgument(synchronizeWithFolder, [qnapAlbumsMgmr.save, photoScope], true));
+            }
+        } else if (qnapAlbumsMgmr.list) {
+            if (qnapAlbumsMgmr.video) {
+                photoScope.albumName = qnapAlbumsMgmr.list;
+                mainPromise = mainPromise.then(uppendArgument(getListOfAlbum, [qnapAlbumsMgmr.list, videoScope], true))
+            }
+            if (qnapAlbumsMgmr.photo) {
+                photoScope.albumName = qnapAlbumsMgmr.list;
+                mainPromise = mainPromise.then(uppendArgument(getListOfAlbum, [qnapAlbumsMgmr.list, photoScope], true))
+            }
+        } else if (qnapAlbumsMgmr.import) {
+            videoScope.albumName = qnapAlbumsMgmr.import;
+            if (qnapAlbumsMgmr.video) {
+                videoScope.albumName = qnapAlbumsMgmr.import;
+                mainPromise = mainPromise.then(uppendArgument(importAlbums, [qnapAlbumsMgmr.import, videoScope], true));
+            }
+            if (qnapAlbumsMgmr.photo) {
+                photoScope.albumName = qnapAlbumsMgmr.import;
+                mainPromise = mainPromise.then(uppendArgument(importAlbums, [qnapAlbumsMgmr.import, photoScope], true));
+            }
+        } else if (qnapAlbumsMgmr.export) {
+            if (qnapAlbumsMgmr.video) {
+                videoScope.albumName = qnapAlbumsMgmr.export;
+                mainPromise = mainPromise.then(uppendArgument(exportToFile, [qnapAlbumsMgmr.export, videoScope], true));
+            }
+            if (qnapAlbumsMgmr.photo) {
+                photoScope.albumName = qnapAlbumsMgmr.export;
+                mainPromise = mainPromise.then(uppendArgument(exportToFile, [qnapAlbumsMgmr.export, photoScope], true));
             }
         }
-        qnapAlbumsMgmr.help();
+
+        if (!qnapAlbumsMgmr.photo && !qnapAlbumsMgmr.video) {
+            qnapAlbumsMgmr.help();
+        }
+        return mainPromise.then(function () {
+            console.log("Processing is done");
+        });
     })
     .catch(AlbumNotFoundError, function (error) {
         console.error('Album ' + error.extra + 'is  not found');
+        conn.end();
+        process.exit(1);
+    })
+    .catch(function (error) {
+        console.error(error);
+        console.log(error.stack);
+        conn.end();
         process.exit(1);
     })
     .then(function () {
+        conn.end();
         process.exit(0);
         console.log("end");
     });
@@ -68,28 +131,28 @@ var queryStrGetAllVideosFromAlbumById = 'SELECT pt.* FROM videoTable pt INNER JO
 var queryStrGetVideoAlbumByName = 'SELECT * FROM videoAlbumTable where cAlbumTitle="{0}"';
 var queryStrGetAllVideoAlbums = 'SELECT * FROM videoAlbumTable';
 
-function synchronizeWithFolder(syncPath) {
-    return getAlbums()
+function synchronizeWithFolder(syncPath, scope) {
+    return getAlbums(scope)
         .map(function (albumRow) {
             console.log("Synchronize album " + albumRow.cAlbumTitle);
-            return getAlbumItems(albumRow)
+            return getAlbumItems(albumRow, scope)
                 .then(function (itemRows) {
-                    var exportFolder = path.join(syncPath + albumRow.cAlbumTitle.replace("[/\\:'\"]", "_"), "/");
+                    var exportFolder = path.join(syncPath, albumRow.cAlbumTitle.replace("[/\\:'\"]", "_"), "/");
                     return fs
                         .statAsync(exportFolder)
                         .then(function () {
-                            console.log("delete existed folder "+exportFolder);
+                            console.log("\tdelete existed folder " + exportFolder);
                             return rmdir(exportFolder);
                         })
                         .catch(function () {
-                            console.log("folder "+exportFolder+" don't exist")
+                            console.log("\tfolder " + exportFolder + " don't exist")
                         })
                         .then(function () {
-                            console.log("create folder "+exportFolder);
+                            console.log("\tcreate folder " + exportFolder);
                             return fs.mkdirsAsync(exportFolder)
                         })
                         .then(function () {
-                            console.log("create symlinks for " + itemRows.length + " items in " + exportFolder);
+                            console.log("\tcreate symlinks for " + itemRows.length + " items in " + exportFolder);
                             return Promise
                                 .map(itemRows, function (itemRow) {
                                     //console.log(exportFolder,pictureRow.cFileName);
@@ -98,13 +161,11 @@ function synchronizeWithFolder(syncPath) {
                         })
                 });
         })
-
-
 }
 
 
-function getAlbumItems(albumRow) {
-    var queryStr = qnapAlbumsMgmr.video ? queryStrGetAllVideosForAlbumByName : queryStrGetAllPictureForAlbumByName;
+function getAlbumItems(albumRow, scope) {
+    var queryStr = scope.processVideos ? queryStrGetAllVideosForAlbumByName : queryStrGetAllPictureForAlbumByName;
     return conn
         .queryAsync(queryStr.replace('{0}', albumRow.cAlbumTitle))
         .spread(function (picturesRows, fields) {
@@ -115,90 +176,85 @@ function getAlbumItems(albumRow) {
             return pictureRow;
         })
 }
-function getAlbum(albumName) {
-    var queryStr = qnapAlbumsMgmr.video ? queryStrGetVideoAlbumByName : queryStrGetPictureAlbumByName;
+function getAlbum(albumName, scope) {
+    var queryStr = scope.processVideos ? queryStrGetVideoAlbumByName : queryStrGetPictureAlbumByName;
     return conn
         .queryAsync(queryStr)
         .spread(function (albumRows, fileds) {
             if (albumRows.length == 0) {
-                throw new AlbumNotFoundError("Album " + albumName + " is not founded", albumName);
+                throw new AlbumNotFoundError(scope.logPrefix + " album " + albumName + " is not founded", albumName);
             }
             return albumRows[0];
         });
 }
 
 
-function getAlbums() {
-    var queryStr = qnapAlbumsMgmr.video ? queryStrGetAllVideoAlbums : queryStrGetAllPicureAlbums;
+function getAlbums(scope) {
+    var queryStr = scope.processVideos ? queryStrGetAllVideoAlbums : queryStrGetAllPicureAlbums;
     return conn
         .queryAsync(queryStr)
         .spread(function (albumRows, fileds) {
-            console.log('Founded ' + albumRows.length + " albums");
+            console.log('Founded ' + albumRows.length + " " + scope.logPrefix + " albums");
             return albumRows;
         });
 }
 
-function exportAlbumToFile(albumRow) {
+function exportAlbumToFile(albumRow, index, size, scope) {
     var albumName = albumRow.cAlbumTitle;
     console.log("exporting " + albumName);
-    return getAlbumItems(albumRow)
+    return getAlbumItems(albumRow, scope)
         .then(function (itemRows) {
-            var exportFileName = albumName.replace("[/\\:'\"]", "_") + '_' + moment().toISOString() + ".dump";
+            var exportFileName = albumName.replace("[/\\:'\"]", "_") + '_' + moment().format("YYYY-MM-DD_hh_mm_ss") + ".dump";
             var dumpObj = {albumName: albumName, datum: moment().toISOString(), items: []};
             for (var i = 0, len = itemRows.length; i < len; i++) {
                 dumpObj.items.push({fileName: itemRows[i].cFullFileName});
             }
             return fs.writeFileAsync(exportFileName, JSON.stringify(dumpObj, null, 1)).then(function () {
-                console.log('Album "' + albumName + '" with  ' + itemRows.length + " items is exported to " + exportFileName);
+                console.log(scope.logPrefix + ' album "' + albumName + '" with  ' + itemRows.length + " items is exported to " + exportFileName);
             })
         });
 }
-function exportToFile(albumName) {
+function exportToFile(albumName, scope) {
     if (albumName !== true) {
-        return getAlbum(albumName).then(exportAlbumToFile);
+        return getAlbum(albumName, scope).then(uppendArgument(exportAlbumToFile, [0, 1, scope]));
     }
     else {
-        return getAlbums()
-            .map(exportAlbumToFile);
+        return getAlbums(scope)
+            .map(uppendArgument(exportAlbumToFile, scope));
     }
 }
 
 
-function getListOfAlbum(albumName) {
+function getListOfAlbum(albumName, scope) {
     if (albumName !== true) {
-        return getAlbum(albumName).then(
-            function (albumRow) {
-                var albumName = albumRow.cAlbumTitle;
-                var queryStr = (qnapAlbumsMgmr.video ? queryStrGetAllVideosForAlbumByName : queryStrGetAllPictureForAlbumByName).replace('{0}', albumName);
-                return conn
-                    .queryAsync(queryStr)
-                    .spread(function (itemRows, fields) {
-                        console.log('Album ' + albumName + " has " + itemRows.length + " items:");
-                        return itemRows
-                    })
-                    .map(function (itemRow) {
-                        console.log("\t" + path.join(mountPoint, itemRow.cFullPath, itemRow.cFileName));
-                    })
+        return getAlbum(albumName, scope).then(uppendArgument(getListOfOneAlbum, [0, 1, true, scope]));
+    }
+    else {
+        return getAlbums(scope)
+            .map(uppendArgument(getListOfOneAlbum, [false, scope]));
+
+    }
+}
+
+function getListOfOneAlbum(albumRow, index, size, verbosePrint, scope) {
+    var albumName = albumRow.cAlbumTitle;
+    var queryStr = (scope.processVideos ? queryStrGetAllVideosForAlbumByName : queryStrGetAllPictureForAlbumByName).replace('{0}', albumName);
+    return conn
+        .queryAsync(queryStr)
+        .spread(function (itemRows, fields) {
+            console.log(scope.logPrefix + ' album ' + albumName + " contains " + itemRows.length + " items:");
+            return itemRows
+        })
+        .map(function (itemRow) {
+            if (verbosePrint) {
+                console.log("\t" + path.join(mountPoint, itemRow.cFullPath, itemRow.cFileName));
             }
-        );
-
-    }
-    else {
-        return getAlbums()
-            .map(function (albumRow) {
-                var queryStr = (qnapAlbumsMgmr.video ? queryStrGetAllVideosFromAlbumById : queryStrGetFroAlbumById).replace("{0}", albumRow.iPhotoAlbumId);
-                return conn
-                    .queryAsync(queryStr)
-                    .spread(function (pictureRows, fields) {
-                        console.log('Album "' + albumRow.cAlbumTitle + '" contains ' + pictureRows.length + ' items');
-                    })
-            })
-    }
+        })
 }
 
-function importAlbums(albumName) {
+function importAlbums(albumName, scope) {
     if (albumName === true) {
-        return getAlbums().map(importAlbum).then(function (arraysOfCommands) {
+        return getAlbums(scope).map(uppendArgument(importAlbum, scope)).then(function (arraysOfCommands) {
             var arrayOfCommands = [];
             for (var i = 0, len = arraysOfCommands.length; i < len; i++) {
                 arrayOfCommands = arrayOfCommands.concat(arraysOfCommands[i])
@@ -207,7 +263,7 @@ function importAlbums(albumName) {
         }).then(createImportCmd);
     }
     else {
-        return getAlbum(albumName).then(importAlbum).then(createImportCmd);
+        return getAlbum(albumName).then(uppendArgument(importAlbum, [0, 1, scope])).then(createImportCmd);
     }
 }
 
@@ -217,19 +273,19 @@ function createImportCmd(arrayOfCommands) {
     return fs.writeFileAsync('tmp_import_albums.cmd', JSON.stringify(cmdObj, null, 1))
 }
 
-function importAlbum(albumRow) {
-    return getAlbumItems(albumRow)
+function importAlbum(albumRow, index, size, scope) {
+    return getAlbumItems(albumRow, scope)
         .then(function (itemRows) {
-            console.log("prepare batch file for " + itemRows.length + ' items in album "' + albumRow.cAlbumTitle + '"');
+            console.log("prepare batch file for " + itemRows.length + ' items in ' + scope.logPrefix + ' album "' + albumRow.cAlbumTitle + '"');
             var arrayOfCommands = [];
             for (var i = 0, len = itemRows.length; i < len; i++) {
                 arrayOfCommands.push({
                     command: qnapAlbumsMgmr.video ? "addToVideoAlbum" : "addToPicAlbum",
                     parameter: [
                         mountPoint,
-                        qnapAlbumsMgmr.video ? albumRow.iVideoAlbumId.toString() : albumRow.iPhotoAlbumId.toString(),
-                        qnapAlbumsMgmr.video ? itemRows[i].iVideoId.toString() : itemRows[i].iPictureId.toString(),
-                        qnapAlbumsMgmr.video ? "2" :"1"
+                        this.processVideos ? albumRow.iVideoAlbumId.toString() : albumRow.iPhotoAlbumId.toString(),
+                        this.processVideos ? itemRows[i].iVideoId.toString() : itemRows[i].iPictureId.toString(),
+                        this.processVideos ? "2" : "1"
                     ]
                 })
             }
@@ -270,6 +326,13 @@ function AlbumNotFoundError(message, extra) {
     this.name = this.constructor.name;
     this.message = message;
     this.extra = extra;
+}
+function uppendArgument(fn, additionalsArguments, override) {
+    return function () {
+        var args = override ? [] : Array.prototype.slice.call(arguments);
+        args = args.concat(additionalsArguments);
+        return fn.apply(this, args);
+    }
 }
 
 require('util').inherits(AlbumNotFoundError, Error);
