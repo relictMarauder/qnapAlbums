@@ -1,5 +1,5 @@
 # qnapAlbums
-qnapAlbums is the tool for save photo/video albums(from Photo and Video Stations) as folders with softLinks to the media files
+qnapAlbums is the tool for saving of photo/video albums(from Photo and Video Stations) as folders with softLinks to the media files
 
 Backup/Restore functionality ist unstable
 
